@@ -1,0 +1,87 @@
+x-data-db-env: &data-db-env
+  DATA_DB_HOST: postgres
+  DATA_DB_PORT: "5432"
+  DATA_DB_NAME: ${DATA_DB_NAME}
+  DATA_DB_USER: ${DATA_DB_USER}
+  DATA_DB_PASSWORD: ${DATA_DB_PASSWORD}
+
+services:
+  # Data warehouse that the DAG loads and the dashboard reads.
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${DATA_DB_NAME}
+      POSTGRES_USER: ${DATA_DB_USER}
+      POSTGRES_PASSWORD: ${DATA_DB_PASSWORD}
+    ports:
+      - "127.0.0.1:${DATA_DB_HOST_PORT:-5433}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATA_DB_USER} -d ${DATA_DB_NAME}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Airflow metadata only; LocalExecutor needs PostgreSQL to run the TaskGroup in parallel.
+  airflow-db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+    volumes:
+      - airflow-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  airflow:
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    command: ["bash", "/opt/airflow/start.sh"]
+    environment:
+      <<: *data-db-env
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD}@airflow-db:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      AIRFLOW__WEBSERVER__WORKERS: "1"
+      AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Bangkok
+      AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+      SOURCE_USER_AGENT: ${SOURCE_USER_AGENT}
+    ports:
+      - "127.0.0.1:${AIRFLOW_HOST_PORT:-8080}:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://localhost:8080/health > /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    environment:
+      <<: *data-db-env
+    ports:
+      - "127.0.0.1:${WEB_HOST_PORT:-8501}:8501"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  airflow-db-data:

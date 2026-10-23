@@ -1,0 +1,5 @@
+# Installed into the Airflow image (apache/airflow:2.10.4) for the DAG tasks.
+# The dashboard's own packages are in web/requirements.txt.
+beautifulsoup4==4.14.2
+psycopg2-binary==2.9.10
+requests>=2.31,<3
